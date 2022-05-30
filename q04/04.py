@@ -4,6 +4,7 @@ import re
 from datetime import datetime
 from statistics import mean
 import netaddr
+from collections import namedtuple
 
 NowTime = datetime.now()
 server_status = []
@@ -208,7 +209,7 @@ class ServerLogParser:
 
         # not repaired
         if bBroken == True and current_access_count >= min_access_count:
-            restxt = f"{log.address},{dt_first_broken}----/--/-- --:--:--"
+            restxt = f"{log.address},{dt_first_broken},----/--/-- --:--:--"
             return_data.append(restxt)
 
         return return_data
@@ -269,12 +270,18 @@ class ServerLogParser:
 
         return return_data
 
+
     def __checkSwitchBroken(self):
         """ネットワークスイッチの故障状態を出力する
         Returns:
             _type_: _description_
         Note:
         """
+        def time_and(t_a_start, t_a_end, t_b_start, t_b_end):
+            start = max(t_a_start, t_b_start)
+            end = max(t_a_end, t_b_end)
+            return {"start": start, "end": end }
+
         return_data = []
         broken_log = self.Return_data["broken"] # 
         networks = {}
@@ -292,7 +299,10 @@ class ServerLogParser:
             networks[txt_ip_network]["address"].add(str(ip))
             networks[txt_ip_network]["log"].append(broken.split(','))
 
+
+        # ネットワーク分繰り返す
         # ネットワーク一覧から
+        return_data = []
         for netwk in networks:
             tgt = networks[netwk]
 
@@ -300,36 +310,49 @@ class ServerLogParser:
             tgt["log"].sort(key=lambda x: x[1])
 
             # エラーのフラグテーブルを生成
-            error_tables = {}
+            flg_tables = {}
             for addr in tgt["address"]:
-                error_tables[addr] = {
+                flg_tables[addr] = {
                     "state" : 0,
-                    "endtime" : datetime.min
+                    "endtime" : datetime.max
                 }
             
             # 時間順に検索して、エラーのフラグを立てる
-            current_datetime = None
-            size = error_tables[addr]
+            sw_crash_datetime = None
+            last_end_time = None
+            size = len(tgt["address"])
+
+            sw_error_flag = 0
             for log in tgt["log"]:
                 addr = log[0]
                 starttime = log[1]
                 endtime = log[2]
-                current_datetime = datetime.strptime(starttime, '%Y%m%d%H%M%S')
+                current_datetime = datetime.strptime(starttime, '%Y-%m-%d %H:%M:%S')
+                if endtime == "----/--/-- --:--:--":
+                    end_datetime = datetime.max
+                else:
+                    end_datetime = datetime.strptime(endtime, '%Y-%m-%d %H:%M:%S')
 
-                error_tables[addr] = {
+                flg_tables[addr] = {
                     "state" : 1,
-                    "endtime" : datetime.strptime(endtime, '%Y%m%d%H%M%S')
+                    "endtime" : end_datetime
                 }
 
-                # end check -- 試行している時間経過してるならフラグを落とす
-                for addr in error_tables:
-                    if current_datetime > error_tables[addr]["endtime"]:
-                        error_tables[addr]["state"] = 0
-
                 # total check -- すべてエラーかチェックする
-                s = sum([error_tables[d]["state"] for d in error_tables])
+                s = sum([flg_tables[d]["state"] for d in flg_tables])
                 if s >= size:
-                    s
+                    sw_error_flag = 1
+                    if sw_crash_datetime == None:
+                        sw_crash_starttime = current_datetime
+                    sw_crash_endtime = min([x["endtime"] for x in flg_tables.values()])
+                    if sw_crash_endtime == datetime.max:
+                        sw_crash_endtime = "----/--/-- --:--:--"
+                    return_data.append(f"{netwk},{sw_crash_starttime},{sw_crash_endtime}")
+                else:
+                    if sw_error_flag == 1:
+                        print(f"sw_crash_endtime === {sw_crash_endtime}")
+                        sw_crash_endtime = min([x["endtime"] for x in flg_tables.values()])
+                        sw_error_flag = 0
 
         return return_data
 
@@ -412,7 +435,7 @@ if __name__=="__main__":
 ##-------------------------------------------------
 ## ----- テストコード
 ##-------------------------------------------------
-testdata_path = "testdata/03"
+testdata_path = "testdata/04"
 
 
 def diff_test(in_txt : str, valid_txt : str, min_access_count: int, overload_average_count: int, overload_limit_time_ms: int):
@@ -444,12 +467,12 @@ def diff_test(in_txt : str, valid_txt : str, min_access_count: int, overload_ave
     return error_line
 
 
-def test_log1_1():
+def test_log1():
     """テスト用のコード
     """
     global testdata_path
     test_txt = "log_1.txt"
-    valid_txt = "valid_1-1.txt"
+    valid_txt = "valid_1.txt"
 
     min_access_count=0
     overload_average_count=2
@@ -465,37 +488,16 @@ def test_log1_1():
 
     assert diffs == []
 
-def _test_log2_1():
+def _test_log2():
     """テスト用のコード
     """
     global testdata_path
     test_txt = "log2.txt"
-    valid_txt = "valid_2-1.txt"
+    valid_txt = "valid_2.txt"
 
     min_access_count=1
     overload_average_count=3
     overload_limit_time_ms=200
-
-    diffs = diff_test(
-        in_txt = f"{testdata_path}/{test_txt}", 
-        valid_txt = f"{testdata_path}/{valid_txt}",
-        min_access_count=min_access_count,
-        overload_average_count=overload_average_count,
-        overload_limit_time_ms=overload_limit_time_ms,
-    )
-
-    assert diffs == []
-
-def _test_log2_2():
-    """テスト用のコード
-    """
-    global testdata_path
-    test_txt = "log2.txt"
-    valid_txt = "valid_2-2.txt"
-
-    min_access_count=1
-    overload_average_count=2
-    overload_limit_time_ms=150
 
     diffs = diff_test(
         in_txt = f"{testdata_path}/{test_txt}", 
